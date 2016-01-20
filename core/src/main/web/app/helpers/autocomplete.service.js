@@ -51,7 +51,7 @@
 
         var evaluator = bkEvaluatorManager.getEvaluator(scope.cellmodel.evaluator);
         if (_.isFunction(evaluator.showDocs)) {
-          attachAutocompleteListeners(hintData, evaluator, scope, cm);
+          attachAutocompleteListeners(hintData, evaluator, scope, cm, matched_text);
         }
 
         if (waitfor.length > 0) {
@@ -79,6 +79,7 @@
         alignWithWord: true,
         completeSingle: true
       };
+      console.log('SHOWING');
       CodeMirror.showHint(cm, getHints, options);
     }
   };
@@ -94,16 +95,61 @@
       showAutocomplete(cm, scope);
     }
   };
-  var attachAutocompleteListeners = function(hintData, evaluator, scope, cm) {
+
+  var attachAutocompleteListeners = function(hintData, evaluator, scope, cm, matched_text) {
     CodeMirror.on(hintData, 'select', function(selectedWord, selectedListItem) {
       evaluator.showDocs(selectedWord, selectedWord.length - 1, function(documentation) {
         scope.$broadcast('showDocumentationForAutocomplete', documentation, true);
+        
+        if (documentation && documentation.ansiHtml) {
+          var params = documentation && documentation.ansiHtml ? getParameters(documentation) : [];
+          writeCompletion(selectedWord, params, cm, matched_text);
+        } else {
+          var index = selectedWord.indexOf(matched_text) + matched_text.length;
+          replaceSelection(selectedWord.substring(index), cm);
+        }
       });
     });
     CodeMirror.on(cm, 'endCompletion', function() {
       scope.$broadcast('hideDocumentationForAutocomplete');
     });
+    CodeMirror.on(hintData, 'pick', function(completion) {
+      var lengthToRemove = completion.length - matched_text.length;
+      var cursorPos = cm.getCursor('from');
+      cm.doc.replaceRange('', {line: cursorPos.line, ch: cursorPos.ch - lengthToRemove}, cursorPos);
+      cm.setCursor(cm.getCursor());
+    })
   };
+
+  function getParameters(doc) {
+    var d = ansi_up.ansi_to_html(doc.ansiHtml);
+    var start = d.indexOf('Parameters\n');
+    if (start === -1) {
+      return [];
+    }
+    d = d.substring(start);
+    d = d.substring(d.indexOf('-\n') + 2, d.indexOf('\n\n'));
+    return _.map(d.split(/\n(?=\S)/), function(param) {
+      var s = param.split(':');
+      return {name: s[0].trim(), description: s[1].trim()};
+    });
+  }
+
+  function writeCompletion(funcName, params, cm, matched_text) {
+    var str = _.map(params, function(p) {
+      return p.name;
+    });
+    var index = funcName.indexOf(matched_text) + matched_text.length;
+    
+    replaceSelection(funcName.substring(index) + '(' + str.join(', ') + ')', cm);
+  }
+
+  function replaceSelection(s, cm) {
+    var handlers = cm._handlers.cursorActivity;
+    cm._handlers.cursorActivity = [];
+    cm.doc.replaceSelection(s, 'around');
+    cm._handlers.cursorActivity = handlers;
+  }
 
   return {
     showAutocomplete: showAutocomplete,
